@@ -2103,6 +2103,12 @@ button.app-nav {
   gap: 10px;
 }
 
+.question-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .question-editor-head
 .question-editor-head-divider {
   font-size: 16px;
@@ -2170,6 +2176,15 @@ button.app-nav {
   color: #1a1d26;
 }
 
+.rich-text-editor .ql-editor img {
+  max-width: 220px;
+  width: auto;
+  height: auto;
+  display: block;
+  margin: 8px 0;
+  border-radius: 6px;
+}
+
 .rich-text-editor .ql-editor.ql-blank::before {
   color: #9ca3af;
   font-style: normal;
@@ -2223,6 +2238,17 @@ button.app-nav {
   font-weight: 400;
   cursor: pointer;
   margin-bottom: 30px;
+}
+
+.question-media-preview {
+  margin-top: 10px;
+}
+
+.question-media-preview img {
+  max-width: 220px;
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--border);
 }
 
 .options-block {

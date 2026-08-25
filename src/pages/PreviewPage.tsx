@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import Breadcrumb from '../components/ui/Breadcrumb'
 import Button from '../components/ui/Button'
 import Badge from '../components/ui/Badge'
 import DatePickerInput from '../components/ui/DatePickerInput'
 import QuestionSidebar from '../components/tests/QuestionSidebar'
 import TestSummaryCard from '../components/tests/TestSummaryCard'
+import QuestionPreviewList from '../components/tests/QuestionPreviewList'
 import { IconCheck } from '../components/icons/Icons'
 import {
   fetchQuestionsBulk,
@@ -28,9 +29,36 @@ const LIVE_OPTIONS = [
   { value: 'custom', label: 'Custom Duration' },
 ]
 
+function isPublishedStatus(status: string | null | undefined) {
+  const value = (status ?? '').toLowerCase()
+  return value === 'live' || value === 'scheduled' || value === 'expired'
+}
+
+function publishedStatusLabel(status: string | null | undefined) {
+  const value = (status ?? 'draft').toLowerCase()
+  if (value === 'live') return 'Published'
+  if (value === 'scheduled') return 'Scheduled'
+  if (value === 'expired') return 'Expired'
+  return 'Draft'
+}
+
+function publishedStatusTone(status: string | null | undefined) {
+  const value = (status ?? '').toLowerCase()
+  if (value === 'live') return 'green' as const
+  if (value === 'scheduled') return 'blue' as const
+  if (value === 'expired') return 'yellow' as const
+  return 'gray' as const
+}
+
 export default function PreviewPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
+  const savedPreviewQuestions = (
+    location.state as { previewQuestions?: Question[] } | null
+  )?.previewQuestions
+  const [searchParams] = useSearchParams()
+  const justPublished = searchParams.get('published') === '1'
   const [test, setTest] = useState<Test | null>(null)
   const [questions, setQuestions] = useState<Question[]>([])
   const [loading, setLoading] = useState(true)
@@ -42,24 +70,29 @@ export default function PreviewPage() {
   const [endDate, setEndDate] = useState('')
   const [endTime, setEndTime] = useState('')
 
-  useEffect(() => {
+  const loadPreview = async () => {
     if (!id) return
-    const load = async () => {
-      setLoading(true)
-      try {
-        const testData = await getTestById(id)
-        setTest(testData)
-        if (testData.questions.length > 0) {
-          const qs = await fetchQuestionsBulk(testData.questions)
-          setQuestions(qs)
-        }
-      } catch (error) {
-        showError(getApiErrorMessage(error, 'Failed to load test preview.'))
-      } finally {
-        setLoading(false)
+    setLoading(true)
+    try {
+      const testData = await getTestById(id)
+      setTest(testData)
+      if (testData.questions.length > 0) {
+        const qs = await fetchQuestionsBulk(testData.questions)
+        setQuestions(
+          savedPreviewQuestions?.length ? savedPreviewQuestions : qs
+        )
+      } else {
+        setQuestions(savedPreviewQuestions ?? [])
       }
+    } catch (error) {
+      showError(getApiErrorMessage(error, 'Failed to load test preview.'))
+    } finally {
+      setLoading(false)
     }
-    load()
+  }
+
+  useEffect(() => {
+    void loadPreview()
   }, [id])
 
   const handlePublish = async () => {
@@ -112,7 +145,9 @@ export default function PreviewPage() {
         result.message ||
           (mode === 'now' ? 'Test published successfully!' : 'Test scheduled successfully!')
       )
-      setTimeout(() => navigate('/dashboard'), 1000)
+      navigate(`/tests/${test.id}/preview?published=1`, { replace: true })
+      await loadPreview()
+      setPublishing(false)
     } catch (error) {
       showError(getApiErrorMessage(error, 'Failed to publish test.'))
       setPublishing(false)
@@ -125,6 +160,8 @@ export default function PreviewPage() {
 
   const allDone =
     questions.length > 0 && questions.length >= (test.total_questions || questions.length)
+  const isPublished = isPublishedStatus(test.status)
+  const showPublishPanel = !isPublished
 
   return (
     <div className="questions-layout">
@@ -137,118 +174,147 @@ export default function PreviewPage() {
 
       <div className="questions-main">
         <div className="questions-top">
-          <Breadcrumb items={[{ label: 'Test creation' }]} />
+          <Breadcrumb items={[{ label: 'Test creation' }, { label: 'Preview' }]} />
         </div>
 
         <div className="publish-status">
           <div className="publish-status-row">
-            <span>Test created</span>
-            <Badge tone="green">
-              <div className={`q-check done`}>
-                <IconCheck /> 
+            <span>{isPublished ? 'Test status' : 'Test created'}</span>
+            <Badge tone={isPublished ? publishedStatusTone(test.status) : 'green'}>
+              <div className="q-check done">
+                <IconCheck />
               </div>
-              {allDone ? `All ${questions.length} Questions done.` : `${questions.length} Questions added.`}
+              {isPublished
+                ? `${publishedStatusLabel(test.status)} · ${questions.length} question(s)`
+                : allDone
+                  ? `All ${questions.length} Questions done.`
+                  : `${questions.length} Questions added.`}
             </Badge>
           </div>
+          {justPublished && test.status === 'live' ? (
+            <p className="publish-success-note">
+              Your test is now live. Review the published output below.
+            </p>
+          ) : null}
         </div>
 
         <TestSummaryCard
           test={test}
-          onEdit={() => navigate(`/tests/${id}/edit`)}
+          onEdit={
+            showPublishPanel ? () => navigate(`/tests/${id}/edit`) : undefined
+          }
         />
 
-        <div className="card-panel publish-panel">
-          <div className="publish-mode">
-            <button
-              type="button"
-              className={`publish-mode-btn${mode === 'now' ? ' active' : ''}`}
-              onClick={() => setMode('now')}
-            >
-              Publish Now
-            </button>
-            <button
-              type="button"
-              className={`publish-mode-btn${mode === 'schedule' ? ' active' : ''}`}
-              onClick={() => setMode('schedule')}
-            >
-              Schedule Publish
-            </button>
-          </div>
+        <QuestionPreviewList
+          questions={questions}
+          title={isPublished ? 'Published test output' : 'Preview all questions'}
+        />
 
-          {mode === 'schedule' && (
-            <div className="ui-field" style={{ marginBottom: 24 }}>
-              <label>Select Date and Time</label>
-              <div className="form-two-col">
-                <DatePickerInput
-                  value={scheduleDate}
-                  onChange={setScheduleDate}
-                  placeholder='Select Date'
-                />
-                <input
-                  type="time"
-                  className="ui-input"
-                  value={scheduleTime}
-                  onChange={(e) => setScheduleTime(e.target.value)}
-                />
-              </div>
+        {showPublishPanel ? (
+          <div className="card-panel publish-panel">
+            <div className="publish-mode">
+              <button
+                type="button"
+                className={`publish-mode-btn${mode === 'now' ? ' active' : ''}`}
+                onClick={() => setMode('now')}
+              >
+                Publish Now
+              </button>
+              <button
+                type="button"
+                className={`publish-mode-btn${mode === 'schedule' ? ' active' : ''}`}
+                onClick={() => setMode('schedule')}
+              >
+                Schedule Publish
+              </button>
             </div>
-          )}
 
-          <div className="live-until">
-            <h3>Live Until</h3>
-            <p>Choose how long this test should remain available on the platform.</p>
-            <div className="live-until-grid">
-              {LIVE_OPTIONS.map((opt) => (
-                <label key={opt.value} className="ui-radio">
-                  <input
-                    type="radio"
-                    name="liveUntil"
-                    checked={liveUntil === opt.value}
-                    onChange={() => setLiveUntil(opt.value)}
+            {mode === 'schedule' && (
+              <div className="ui-field" style={{ marginBottom: 24 }}>
+                <label>Select Date and Time</label>
+                <div className="form-two-col">
+                  <DatePickerInput
+                    value={scheduleDate}
+                    onChange={setScheduleDate}
+                    placeholder="Select Date"
                   />
-                  <span className="ui-radio-mark" />
-                  <span>{opt.label}</span>
-                </label>
-              ))}
-            </div>
-
-            {liveUntil === 'custom' && (
-              <div className="form-two-col" style={{ marginTop: 20 }}>
-                <DatePickerInput
-                  value={endDate}
-                  onChange={setEndDate}
-                  placeholder="Select End Date"
-                />
-                <input
-                  type="time"
-                  className="ui-input"
-                  value={endTime}
-                  onChange={(e) => setEndTime(e.target.value)}
-                />
+                  <input
+                    type="time"
+                    className="ui-input"
+                    value={scheduleTime}
+                    onChange={(e) => setScheduleTime(e.target.value)}
+                  />
+                </div>
               </div>
             )}
-          </div>
 
-          <div className="page-actions">
-            <Button
-              variant="secondary"
-              size="md"
-              onClick={() => navigate(`/tests/${id}/questions`)}
-              disabled={publishing}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="primary"
-              size="lg"
-              className="ui-btn-publish"
-              onClick={handlePublish}
-              disabled={publishing}
-            >
-              {publishing ? 'Confirming...' : 'Confirm'}
-            </Button>
+            <div className="live-until">
+              <h3>Live Until</h3>
+              <p>Choose how long this test should remain available on the platform.</p>
+              <div className="live-until-grid">
+                {LIVE_OPTIONS.map((opt) => (
+                  <label key={opt.value} className="ui-radio">
+                    <input
+                      type="radio"
+                      name="liveUntil"
+                      checked={liveUntil === opt.value}
+                      onChange={() => setLiveUntil(opt.value)}
+                    />
+                    <span className="ui-radio-mark" />
+                    <span>{opt.label}</span>
+                  </label>
+                ))}
+              </div>
+
+              {liveUntil === 'custom' && (
+                <div className="form-two-col" style={{ marginTop: 20 }}>
+                  <DatePickerInput
+                    value={endDate}
+                    onChange={setEndDate}
+                    placeholder="Select End Date"
+                  />
+                  <input
+                    type="time"
+                    className="ui-input"
+                    value={endTime}
+                    onChange={(e) => setEndTime(e.target.value)}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="page-actions">
+              <Button
+                variant="secondary"
+                size="md"
+                onClick={() => navigate(`/tests/${id}/questions`)}
+                disabled={publishing}
+              >
+                Back to questions
+              </Button>
+              <Button
+                variant="primary"
+                size="lg"
+                className="ui-btn-publish"
+                onClick={handlePublish}
+                disabled={publishing || questions.length === 0}
+              >
+                {publishing ? 'Confirming...' : 'Confirm'}
+              </Button>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="page-actions">
+            <Button variant="secondary" onClick={() => navigate('/dashboard')}>
+              Back to dashboard
+            </Button>
+            {test.status === 'live' || test.status === 'scheduled' ? (
+              <Button variant="primary" onClick={() => navigate(`/tests/${id}/questions`)}>
+                View questions
+              </Button>
+            ) : null}
+          </div>
+        )}
       </div>
     </div>
   )

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import Breadcrumb from '../components/ui/Breadcrumb'
 import Button from '../components/ui/Button'
@@ -25,10 +25,12 @@ import {
 import { showError, showSuccess } from '../utils/toast'
 import { getApiErrorMessage } from '../utils/apiError'
 import { stripHtml } from '../helpers/string'
+import { parseQuestionCsv } from '../utils/parseQuestionCsv'
+import { buildQuestionPayload, resolveQuestionTopic } from '../utils/questionPayload'
 import PageLoader from '../components/ui/PageLoader'
 import { useAuthStore } from '../store/authStore'
 import { resolveAuthUserId } from '../utils/authUser'
-import type { Question, SubTopic, Test, Topic } from '../types'
+import type { SubTopic, Test, Topic } from '../types'
 
 interface DraftQuestion {
   id?: string
@@ -42,6 +44,7 @@ interface DraftQuestion {
   difficulty: string
   topic: string
   sub_topic: string
+  media_url: string
 }
 
 type QuestionFieldKey =
@@ -67,6 +70,7 @@ const emptyQuestion = (defaults?: { topic?: string; sub_topic?: string }): Draft
   difficulty: 'easy',
   topic: defaults?.topic ?? '',
   sub_topic: defaults?.sub_topic ?? '',
+  media_url: '',
 })
 
 function topicNameForSubTopic(
@@ -171,6 +175,7 @@ export default function QuestionsPage() {
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
   const [topicCatalog, setTopicCatalog] = useState<Topic[]>([])
   const [subTopicCatalog, setSubTopicCatalog] = useState<SubTopic[]>([])
+  const csvInputRef = useRef<HTMLInputElement>(null)
 
   const current = questions[currentIndex] ?? emptyQuestion()
   const currentErrors = fieldErrors[currentIndex] || {}
@@ -220,6 +225,7 @@ export default function QuestionsPage() {
             difficulty: q.difficulty || 'easy',
             topic: q.topic || defaults.topic,
             sub_topic: q.sub_topic || defaults.sub_topic,
+            media_url: q.media_url || '',
           }))
         )
       } else {
@@ -310,6 +316,67 @@ export default function QuestionsPage() {
     setCurrentIndex(safeIndex)
   }
 
+  const handleCsvUpload = async (file: File) => {
+    if (!test) return
+
+    try {
+      const text = await file.text()
+      const { rows, errors } = parseQuestionCsv(text, {
+        defaultDifficulty: test.difficulty || 'easy',
+        defaultTopic: draftDefaults.topic,
+        defaultSubTopic: draftDefaults.sub_topic,
+        allowedTopics: test.topics || [],
+        allowedSubTopics: test.sub_topics || [],
+      })
+
+      if (rows.length === 0) {
+        showError(errors[0] || 'No valid rows found in CSV.')
+        return
+      }
+
+      const imported: DraftQuestion[] = rows.map((row) => ({
+        question: row.question,
+        option1: row.option1,
+        option2: row.option2,
+        option3: row.option3,
+        option4: row.option4,
+        correct_option: row.correct_option,
+        explanation: row.explanation,
+        difficulty: row.difficulty,
+        topic: row.topic,
+        sub_topic: row.sub_topic,
+        media_url: row.media_url,
+      }))
+
+      setQuestions((prev) => {
+        const onlyEmptyDraft =
+          prev.length === 1 && !isQuestionStarted(prev[0])
+        const base = onlyEmptyDraft ? [] : prev.filter((q) => isQuestionStarted(q))
+        const merged = [...base, ...imported].slice(0, totalTarget)
+        const next = merged.length > 0 ? merged : [emptyQuestion(draftDefaults)]
+        setCurrentIndex(Math.min(base.length, Math.max(next.length - 1, 0)))
+        return next
+      })
+      setFieldErrors({})
+
+      const skipped = imported.length - Math.min(imported.length, totalTarget)
+      const message =
+        skipped > 0
+          ? `Imported ${Math.min(imported.length, totalTarget)} question(s). ${skipped} row(s) skipped (test limit: ${totalTarget}).`
+          : `Imported ${imported.length} question(s) from CSV.`
+
+      if (errors.length > 0) {
+        showSuccess(`${message} ${errors.length} row(s) had validation warnings.`)
+      } else {
+        showSuccess(message)
+      }
+    } catch {
+      showError('Failed to read CSV file.')
+    } finally {
+      if (csvInputRef.current) csvInputRef.current.value = ''
+    }
+  }
+
   const addMcq = () => {
     if (questions.length >= totalTarget) {
       showError(`You can add at most ${totalTarget} questions for this test.`)
@@ -363,43 +430,32 @@ export default function QuestionsPage() {
 
     setSaving(true)
     try {
-      const existingIds = complete.filter((q) => q.id).map((q) => q.id!) as string[]
-      const fresh = complete.filter((q) => !q.id).map((q) => {
+      const payloadFor = (q: DraftQuestion) => {
         const allowed = subTopicsForTopic(
           q.topic,
           test.sub_topics || [],
           topicCatalog,
           subTopicCatalog
         )
-        const topic = allowed.includes(q.sub_topic)
-          ? q.topic
-          : topicNameForSubTopic(q.sub_topic, topicCatalog, subTopicCatalog) ||
-            draftDefaults.topic
-        return {
-          type: 'mcq',
-          question: q.question,
-          option1: q.option1,
-          option2: q.option2,
-          option3: q.option3,
-          option4: q.option4,
-          correct_option: q.correct_option,
-          explanation: q.explanation || undefined,
-          difficulty: q.difficulty || undefined,
+        const topic = resolveQuestionTopic(
+          q,
+          allowed,
+          draftDefaults.topic,
+          (subName) => topicNameForSubTopic(subName, topicCatalog, subTopicCatalog)
+        )
+        return buildQuestionPayload(q, {
+          testId: test.id,
           subject: test.subject,
           topic,
-          sub_topic: q.sub_topic || draftDefaults.sub_topic,
-          test_id: test.id,
-        }
-      })
-
-      let allIds = existingIds
-      let bulkMessage: string | undefined
-
-      if (fresh.length > 0) {
-        const created = await bulkCreateQuestions(fresh as Question[])
-        allIds = [...allIds, ...created.data.map((q) => q.id!).filter(Boolean)]
-        bulkMessage = created.message
+          subTopic: q.sub_topic || draftDefaults.sub_topic,
+        })
       }
+
+      const payloads = complete.map((q) => payloadFor(q))
+      const created = await bulkCreateQuestions(payloads)
+      const allIds = created.data.map((q) => q.id!).filter(Boolean)
+      const previewQuestions = created.data
+      const bulkMessage = created.message
 
       const metadata = editValues
         ? toCreatePayload(editValues)
@@ -426,8 +482,11 @@ export default function QuestionsPage() {
       showSuccess(
         bulkMessage || updated.message || 'Questions saved successfully'
       )
-      if (goPreview) navigate(`/tests/${updated.data.id || test.id}/preview`)
-      else {
+      if (goPreview) {
+        navigate(`/tests/${updated.data.id || test.id}/preview`, {
+          state: { previewQuestions },
+        })
+      } else {
         await loadTest()
         setSaving(false)
       }
@@ -493,6 +552,23 @@ export default function QuestionsPage() {
                 <Button variant="soft" onClick={addMcq} disabled={questions.length >= totalTarget}>
                   + MCQ
                 </Button>
+                <Button
+                  variant="soft"
+                  onClick={() => csvInputRef.current?.click()}
+                  disabled={questions.length >= totalTarget}
+                >
+                  + CSV
+                </Button>
+                <input
+                  ref={csvInputRef}
+                  type="file"
+                  accept=".csv,text/csv"
+                  hidden
+                  onChange={(e) => {
+                    const file = e.target.files?.[0]
+                    if (file) void handleCsvUpload(file)
+                  }}
+                />
               </div>
             </div>
           </div>
@@ -511,6 +587,21 @@ export default function QuestionsPage() {
             />
             {currentErrors.question ? (
               <span className="ui-field-error">{currentErrors.question}</span>
+            ) : null}
+          </div>
+
+          <div className="ui-field" style={{ marginTop: '20px' }}>
+            <h5>Question image URL (optional)</h5>
+            <input
+              className="ui-input"
+              placeholder="https://example.com/image.png"
+              value={current.media_url}
+              onChange={(e) => updateCurrent({ media_url: e.target.value })}
+            />
+            {current.media_url ? (
+              <div className="question-media-preview">
+                <img src={current.media_url} alt="Question preview" />
+              </div>
             ) : null}
           </div>
 

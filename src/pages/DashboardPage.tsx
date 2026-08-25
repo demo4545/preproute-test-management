@@ -48,6 +48,14 @@ function statusBadgeTone(status: string | null) {
   return 'gray' as const
 }
 
+function viewTestPath(test: Test) {
+  const status = normalizedStatus(test)
+  if (status === 'live' || status === 'scheduled' || status === 'expired') {
+    return `/tests/${test.id}/preview`
+  }
+  return `/tests/${test.id}/questions`
+}
+
 export default function DashboardPage() {
   const navigate = useNavigate()
   const user = useAuthStore((s) => s.user)
@@ -253,7 +261,7 @@ export default function DashboardPage() {
                               className="table-action-btn table-action-view"
                               aria-label={`View ${test.name}`}
                               title="View"
-                              onClick={() => navigate(`/tests/${test.id}/questions`)}
+                              onClick={() => navigate(viewTestPath(test))}
                             >
                               <IconEye />
                             </button>

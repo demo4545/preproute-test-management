@@ -1,5 +1,6 @@
-import { useMemo } from 'react'
+import { useCallback, useMemo, useRef } from 'react'
 import ReactQuill from 'react-quill-new'
+import type ReactQuillType from 'react-quill-new'
 import 'react-quill-new/dist/quill.snow.css'
 import { IconTrash } from '../icons/Icons'
 
@@ -24,16 +25,47 @@ export default function RichTextEditor({
   placeholder = 'Type here',
   onClear,
 }: RichTextEditorProps) {
+  const quillRef = useRef<ReactQuillType | null>(null)
+
+  const insertImage = useCallback((src: string) => {
+    const quill = quillRef.current?.getEditor()
+    if (!quill || !src) return
+    const range = quill.getSelection(true)
+    const index = range?.index ?? quill.getLength()
+    quill.insertEmbed(index, 'image', src)
+    quill.setSelection(index + 1)
+  }, [])
+
+  const imageHandler = useCallback(() => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = 'image/*'
+    input.onchange = () => {
+      const file = input.files?.[0]
+      if (!file) return
+      const reader = new FileReader()
+      reader.onload = () => {
+        if (typeof reader.result === 'string') insertImage(reader.result)
+      }
+      reader.readAsDataURL(file)
+    }
+    input.click()
+  }, [insertImage])
+
   const modules = useMemo(
     () => ({
-      toolbar: TOOLBAR,
+      toolbar: {
+        container: TOOLBAR,
+        handlers: { image: imageHandler },
+      },
     }),
-    []
+    [imageHandler]
   )
 
   return (
     <div className="rich-text-editor">
       <ReactQuill
+        ref={quillRef}
         theme="snow"
         value={value}
         onChange={onChange}

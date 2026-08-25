@@ -1,0 +1,68 @@
+/* Rendered Quill HTML outside the editor (preview, read-only views) */
+.ql-editor.preview-question-body,
+.preview-question-body.ql-editor {
+  padding: 0;
+  min-height: 0;
+  height: auto;
+  overflow: visible;
+  white-space: normal;
+}
+
+.preview-question-body strong,
+.preview-question-body b {
+  font-weight: 700;
+}
+
+.preview-question-body em,
+.preview-question-body i {
+  font-style: italic;
+}
+
+.preview-question-body u {
+  text-decoration: underline;
+}
+
+.preview-question-body s,
+.preview-question-body strike {
+  text-decoration: line-through;
+}
+
+.preview-question-body a {
+  color: var(--primary);
+  text-decoration: underline;
+}
+
+.preview-question-body .ql-align-center {
+  text-align: center;
+}
+
+.preview-question-body .ql-align-right {
+  text-align: right;
+}
+
+.preview-question-body .ql-align-justify {
+  text-align: justify;
+}
+
+.preview-question-body img {
+  max-width: 220px;
+  width: auto;
+  height: auto;
+  display: block;
+  margin: 8px 0;
+  border-radius: 6px;
+}
+
+.preview-question-body ul,
+.preview-question-body ol {
+  padding-left: 1.5em;
+  margin: 0.5em 0;
+}
+
+.preview-question-body p {
+  margin: 0 0 0.5em;
+}
+
+.preview-question-body p:last-child {
+  margin-bottom: 0;
+}

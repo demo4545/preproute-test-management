@@ -1,10 +1,7 @@
 import axios from 'axios'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
-
-if (!API_BASE_URL) {
-  throw new Error('VITE_API_BASE_URL is missing. Set it in client/.env')
-}
+/** Same-origin `/api` avoids CORS on Vercel (proxied) and locally (Vite proxy). */
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
